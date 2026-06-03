@@ -34,9 +34,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # uv (fast Python package/venv manager) via the official standalone installer.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-# Claude Code CLI. Installs the latest release; the CLI then auto-updates itself at
-# runtime, so the cached image stays current without rebuilds.
-RUN npm install -g @anthropic-ai/claude-code
+# Install global npm packages into the node user's home rather than the root-owned
+# /usr/local prefix. This lets the dropped-privilege `node` user auto-update the CLI
+# (and globally install other tools) at runtime without sudo — otherwise Claude logs
+# "Auto-update failed: no write permission to npm prefix" on every start.
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global \
+    PATH=/home/node/.npm-global/bin:$PATH
+
+# Claude Code CLI. Installs the latest release into the writable prefix above; the CLI
+# then auto-updates itself at runtime, so the cached image stays current without rebuilds.
+RUN mkdir -p /home/node/.npm-global \
+    && npm install -g @anthropic-ai/claude-code \
+    && chown -R node:node /home/node/.npm-global
 
 # Passwordless sudo for the disposable, isolated `node` user (uid/gid 1000 in this image).
 RUN echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
