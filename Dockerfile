@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nano \
         less \
         sudo \
+        tmux \
         gnupg2 \
         openssh-client \
         unzip \
@@ -80,6 +81,22 @@ RUN mkdir -p /home/node/.claude && chown -R node:node /home/node/.claude
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Auto-resume tooling (opt-in via CLAUDE_AUTO_RESUME=1): a StopFailure hook script
+# that waits out usage-limit resets and types "continue", plus the minimal tmux
+# config used to wrap interactive sessions (tmux is the channel through which the
+# waiter injects keystrokes; status bar off keeps the UX close to plain claude).
+COPY claude-auto-resume.sh /usr/local/bin/claude-auto-resume.sh
+RUN chmod +x /usr/local/bin/claude-auto-resume.sh \
+    && mkdir -p /usr/local/etc \
+    && printf '%s\n' \
+        'set -g status off' \
+        'set -g mouse on' \
+        'set -g history-limit 50000' \
+        'set -s escape-time 0' \
+        'set -g default-terminal "tmux-256color"' \
+        'set -ga terminal-overrides ",*:Tc"' \
+        > /usr/local/etc/claude-tmux.conf
 
 WORKDIR /workspace
 ENTRYPOINT ["docker-entrypoint.sh"]

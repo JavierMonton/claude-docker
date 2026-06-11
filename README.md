@@ -45,6 +45,21 @@ alias claude-yolo='docker run --rm -it \
 Now `claude-docker` starts Claude with its normal approval prompts, and `claude-yolo` starts it
 fully autonomous.
 
+Optionally, add a third alias that is fully autonomous **and** survives usage limits: when Claude
+hits the rolling usage-limit window ("5-hour limit reached ∙ resets 3pm"), it waits for the reset
+and automatically continues the task instead of stopping until you type `continue`. See
+[Auto-resume after usage limits](#auto-resume-after-usage-limits) for how it works:
+
+```sh
+alias claude-yolo-autoresume='docker run --rm -it \
+  -v "$PWD":/workspace -w /workspace \
+  -v claude-docker-config:/home/node/.claude \
+  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) \
+  -e CLAUDE_AUTO_RESUME=1 \
+  -e TZ=$(cat /etc/timezone 2>/dev/null || readlink /etc/localtime | sed "s|.*zoneinfo/||") \
+  claude-docker --dangerously-skip-permissions'
+```
+
 ### 3. Use it
 
 ```sh
@@ -65,6 +80,7 @@ reused on every future run.
 | --- | --- |
 | `claude-docker` | Start Claude (normal mode, with approval prompts), mounting the current folder. |
 | `claude-docker --dangerously-skip-permissions` | Start Claude in YOLO mode (or use the `claude-yolo` alias above). |
+| `claude-yolo-autoresume` | YOLO mode that also auto-continues after usage-limit resets (alias above). |
 | `claude-docker -p "do X and run it"` | One-shot: run a prompt non-interactively, then exit. |
 | `claude-docker --model opus` | Pass any normal `claude` flag straight through. |
 | `claude-docker bash` | Open a shell in the sandbox instead of Claude (for debugging). |
@@ -133,11 +149,46 @@ accounts, remove the volume: `docker volume rm claude-docker-config`.
   `docker build -t claude-docker .` whenever you want to refresh them (this also refreshes the
   baked-in CLI version used as the offline fallback).
 
+### Auto-resume after usage limits
+
+Claude Code has no built-in way to continue after the rolling usage-limit window resets
+([anthropics/claude-code#36320](https://github.com/anthropics/claude-code/issues/36320)): when the
+limit is hit, an interactive session stops mid-task and idles until you type `continue`. Pass
+`-e CLAUDE_AUTO_RESUME=1` (e.g. via the `claude-yolo-autoresume` alias above) and the sandbox does
+that waiting for you:
+
+1. The entrypoint registers a `StopFailure` hook (matcher `rate_limit`) in the persistent settings,
+   so Claude Code itself reports the moment a turn dies on the usage limit — no fragile polling of
+   screen text to *detect* the event.
+2. Interactive sessions run inside **tmux** (status bar hidden, mouse scrolling enabled — it looks
+   and feels like plain `claude`). tmux is what gives the waiter a way to type into the live session.
+3. When the hook fires, `claude-auto-resume.sh` parses the advertised reset time ("resets 3pm
+   (Europe/Dublin)") off the screen, sleeps until then (plus a 2-minute margin; if no time can be
+   parsed it just retries every 15 minutes), checks Claude is still running, and sends
+   `continue` — resuming whatever task was in flight. Still limited? The hook fires again and the
+   cycle repeats. Progress is logged to `/tmp/claude-auto-resume.log` inside the container.
+4. Non-interactive runs (`claude-docker -p "…"` with the env var set) exit on a limit instead of
+   idling, so they get a retry loop instead: failures that look like a usage limit are re-run with
+   `--continue` after the reset, up to `CLAUDE_AUTO_RESUME_MAX_RETRIES` times (default 12). Other
+   failures exit immediately, untouched.
+
+Notes:
+
+- **It's opt-in.** Without `CLAUDE_AUTO_RESUME=1` nothing changes — the hook script no-ops even if
+  a registration is left in the config volume from an earlier run.
+- **Pair it with YOLO mode.** Auto-resume exists for unattended runs; if Claude resumes at 3am and
+  immediately asks for an approval, you've gained little. That's why the suggested alias includes
+  `--dangerously-skip-permissions` — same caveats as `claude-yolo`.
+- **Pass your timezone.** The reset message usually includes an IANA zone, which is used directly.
+  When it doesn't, the container falls back to `$TZ` (the alias forwards your host zone) and then
+  UTC — worst case the fallback just retries every 15 minutes until the window is actually open.
+- **tmux niceties:** scroll with the mouse wheel or `Ctrl-b [` (then `q` to exit scrollback).
+
 ### What's in the image
 
 Base: `node:22-bookworm`. Pre-installed: `git`, `curl`, `wget`, `ripgrep`, `fd-find`, `jq`,
 `build-essential`, `python3` + `pip` + `venv` + `pipx`, [`uv`](https://github.com/astral-sh/uv),
-[`sdkman`](https://sdkman.io) (for JVM tooling — see below), `vim`, `nano`, `gnupg`,
+[`sdkman`](https://sdkman.io) (for JVM tooling — see below), `tmux`, `vim`, `nano`, `gnupg`,
 `openssh-client`, plus Node/npm and the Claude Code CLI. The `node` user has **passwordless
 sudo**, so Claude can `sudo apt-get install …` anything else it needs on the fly (changes vanish
 when the container exits). For permanent additions, edit the `Dockerfile` and rebuild.
@@ -163,6 +214,7 @@ add a `sdk install …` line to the `Dockerfile` if you want a version baked in 
 | --- | --- |
 | `Dockerfile` | Defines the sandbox image. |
 | `docker-entrypoint.sh` | Remaps uid/gid, drops to the non-root user, runs Claude (passing any flags through). |
+| `claude-auto-resume.sh` | Opt-in hook script that waits out usage-limit resets and types `continue` (see above). |
 | `.dockerignore` | Keeps the build context small. |
 
 ---
