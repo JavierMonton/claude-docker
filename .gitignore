@@ -1,0 +1,16 @@
+# JetBrains IDEs (IntelliJ, GoLand, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Editor backups / swap files
+*~
+*.swp
+*.swo
