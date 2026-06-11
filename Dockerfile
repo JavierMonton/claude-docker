@@ -28,11 +28,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gnupg2 \
         openssh-client \
         unzip \
+        zip \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # uv (fast Python package/venv manager) via the official standalone installer.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# SDKMAN — per-user manager for JVM tooling. Lets future sessions `sdk install` any version
+# of Java, Scala, Kotlin, Maven, Gradle, sbt, etc. at runtime without rebuilding the image.
+# SDKMAN is per-user, so it's installed for the non-root `node` user under $SDKMAN_DIR (which
+# the installer honors over $HOME). rcupdate=false stops it from editing root's shell files;
+# we wire it into node's rc files ourselves so the `sdk` function and installed tool shims are
+# on PATH however the shell starts. We edit the config to auto-answer `sdk install` prompts (so
+# non-interactive agent sessions don't hang on a y/n) and to skip the per-shell self-update
+# check. The init snippet is written to BOTH .bashrc and .bash_profile (rather than chaining
+# them) so it loads regardless of shell type, bypassing the usual non-interactive .bashrc guard.
+ENV SDKMAN_DIR=/home/node/.sdkman
+RUN curl -s "https://get.sdkman.io?rcupdate=false" | bash \
+    && sed -i \
+        -e 's/^sdkman_auto_answer=.*/sdkman_auto_answer=true/' \
+        -e 's/^sdkman_auto_selfupdate=.*/sdkman_auto_selfupdate=false/' \
+        "$SDKMAN_DIR/etc/config" \
+    && printf '\n# SDKMAN\nexport SDKMAN_DIR="%s"\n[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"\n' "$SDKMAN_DIR" \
+        | tee -a /home/node/.bashrc /home/node/.bash_profile > /dev/null \
+    && chown -R node:node "$SDKMAN_DIR" /home/node/.bashrc /home/node/.bash_profile
 
 # Install global npm packages into the node user's home rather than the root-owned
 # /usr/local prefix. This lets the dropped-privilege `node` user auto-update the CLI

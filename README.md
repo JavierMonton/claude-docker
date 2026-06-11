@@ -121,19 +121,41 @@ accounts, remove the volume: `docker volume rm claude-docker-config`.
 
 ### Updating
 
-- **The Claude CLI updates itself** at runtime by default, so you stay on the latest version
-  without doing anything.
+- **The Claude CLI is refreshed on every launch.** The entrypoint runs
+  `npm install -g @anthropic-ai/claude-code@latest` before starting Claude, so each run pulls the
+  latest release. This is necessary because the container runs with `--rm`: the CLI lives in the
+  image layer, not in a persisted volume, so the in-session auto-update is thrown away on exit and
+  each launch would otherwise revert to whatever version was baked into the image at build time.
+  - It's best-effort — if you're offline, it falls back to the baked-in version instead of failing.
+  - Set `CLAUDE_AUTO_UPDATE=0` (e.g. `-e CLAUDE_AUTO_UPDATE=0` in the alias) to skip the check for a
+    faster start / a pinned version.
 - **The system tools** (Python, Node, ripgrep, etc.) are baked into the image. Re-run
-  `docker build -t claude-docker .` whenever you want to refresh them.
+  `docker build -t claude-docker .` whenever you want to refresh them (this also refreshes the
+  baked-in CLI version used as the offline fallback).
 
 ### What's in the image
 
 Base: `node:22-bookworm`. Pre-installed: `git`, `curl`, `wget`, `ripgrep`, `fd-find`, `jq`,
 `build-essential`, `python3` + `pip` + `venv` + `pipx`, [`uv`](https://github.com/astral-sh/uv),
-`vim`, `nano`, `gnupg`, `openssh-client`, plus Node/npm and the Claude Code CLI. The `node` user
-has **passwordless sudo**, so Claude can `sudo apt-get install …` anything else it needs on the
-fly (changes vanish when the container exits). For permanent additions, edit the `Dockerfile` and
-rebuild.
+[`sdkman`](https://sdkman.io) (for JVM tooling — see below), `vim`, `nano`, `gnupg`,
+`openssh-client`, plus Node/npm and the Claude Code CLI. The `node` user has **passwordless
+sudo**, so Claude can `sudo apt-get install …` anything else it needs on the fly (changes vanish
+when the container exits). For permanent additions, edit the `Dockerfile` and rebuild.
+
+**JVM tooling via SDKMAN.** No JDK is baked in, but [SDKMAN](https://sdkman.io) is installed for
+the `node` user so a session can pull whatever version it needs at runtime, e.g.:
+
+```sh
+sdk install java 21.0.5-tem    # a JDK
+sdk install maven              # Maven
+sdk install scala              # Scala (also: kotlin, gradle, sbt, …)
+sdk list java                  # see available versions
+```
+
+It's auto-answer enabled (installs won't block on prompts) and wired into both `.bashrc` and
+`.bash_profile`, so the `sdk` command and installed tools are on `PATH` in any shell. Installs
+live under `/home/node/.sdkman` and, like everything else, vanish when the container exits —
+add a `sdk install …` line to the `Dockerfile` if you want a version baked in permanently.
 
 ### Files in this repo
 
