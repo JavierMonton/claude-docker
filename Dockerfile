@@ -35,6 +35,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # uv (fast Python package/venv manager) via the official standalone installer.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
+# Rust toolchain via rustup (cargo, rustc, clippy, rustfmt). Installed under the `node`
+# user's home so future sessions can `rustup update` / `rustup component add` / install
+# extra toolchains at runtime without sudo. PATH is set via ENV (rather than shell rc
+# files) so cargo is found no matter how the process is started. The C linker Rust needs
+# comes from build-essential above.
+ENV RUSTUP_HOME=/home/node/.rustup \
+    CARGO_HOME=/home/node/.cargo \
+    PATH=/home/node/.cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --no-modify-path --profile default --default-toolchain stable \
+    && chown -R node:node "$RUSTUP_HOME" "$CARGO_HOME"
+
 # SDKMAN — per-user manager for JVM tooling. Lets future sessions `sdk install` any version
 # of Java, Scala, Kotlin, Maven, Gradle, sbt, etc. at runtime without rebuilding the image.
 # SDKMAN is per-user, so it's installed for the non-root `node` user under $SDKMAN_DIR (which

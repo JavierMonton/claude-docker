@@ -137,6 +137,8 @@ accounts, remove the volume: `docker volume rm claude-docker-config`.
 
 Base: `node:22-bookworm`. Pre-installed: `git`, `curl`, `wget`, `ripgrep`, `fd-find`, `jq`,
 `build-essential`, `python3` + `pip` + `venv` + `pipx`, [`uv`](https://github.com/astral-sh/uv),
+Rust via [`rustup`](https://rustup.rs) (`cargo`, `rustc`, `clippy`, `rustfmt` — stable toolchain,
+owned by the `node` user so sessions can `rustup update` or add components without sudo),
 [`sdkman`](https://sdkman.io) (for JVM tooling — see below), `vim`, `nano`, `gnupg`,
 `openssh-client`, plus Node/npm and the Claude Code CLI. The `node` user has **passwordless
 sudo**, so Claude can `sudo apt-get install …` anything else it needs on the fly (changes vanish
