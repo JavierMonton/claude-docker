@@ -139,25 +139,46 @@ Base: `node:22-bookworm`. Pre-installed: `git`, `curl`, `wget`, `ripgrep`, `fd-f
 `build-essential`, `python3` + `pip` + `venv` + `pipx`, [`uv`](https://github.com/astral-sh/uv),
 Rust via [`rustup`](https://rustup.rs) (`cargo`, `rustc`, `clippy`, `rustfmt` — stable toolchain,
 owned by the `node` user so sessions can `rustup update` or add components without sudo),
-[`sdkman`](https://sdkman.io) (for JVM tooling — see below), `vim`, `nano`, `gnupg`,
-`openssh-client`, plus Node/npm and the Claude Code CLI. The `node` user has **passwordless
-sudo**, so Claude can `sudo apt-get install …` anything else it needs on the fly (changes vanish
-when the container exits). For permanent additions, edit the `Dockerfile` and rebuild.
+PHP + Composer (see below), a JDK + Maven via [`sdkman`](https://sdkman.io) (see below), the
+system libraries for headless Chromium, `vim`, `nano`, `gnupg`, `openssh-client`, plus Node/npm
+and the Claude Code CLI. The `node` user has **passwordless sudo**, so Claude can
+`sudo apt-get install …` anything else it needs on the fly (changes vanish when the container
+exits). For permanent additions, edit the `Dockerfile` and rebuild.
 
-**JVM tooling via SDKMAN.** No JDK is baked in, but [SDKMAN](https://sdkman.io) is installed for
-the `node` user so a session can pull whatever version it needs at runtime, e.g.:
+**PHP (for MediaWiki).** PHP 8.3 CLI from the [Sury repository](https://packages.sury.org/php/)
+(Debian 12's own PHP 8.2 is too old for current MediaWiki core), with the extensions core's
+PHPUnit, phpcs and Phan need: `intl`, `mbstring`, `xml`, `sqlite3`, `gmp`, `bcmath`, `curl`,
+`readline`, `zip`, `apcu` and `ast` (so Phan runs natively, without `--allow-polyfill-parser`).
+`memory_limit` is `-1` for the CLI. Composer 2 is at `/usr/local/bin/composer`. To build with
+another PHP version (Sury has 8.3, 8.4 and 8.5 for bookworm):
 
 ```sh
-sdk install java 21.0.5-tem    # a JDK
-sdk install maven              # Maven
-sdk install scala              # Scala (also: kotlin, gradle, sbt, …)
-sdk list java                  # see available versions
+docker build --build-arg PHP_VERSION=8.5 -t claude-docker .
+```
+
+**Headless Chromium.** The shared libraries and fonts Chromium needs are installed, so Playwright
+works without sudo. The browser itself is downloaded at runtime to match the Playwright version in
+use, e.g. `uv run --with playwright python -m playwright install chromium`.
+
+**JVM tooling via SDKMAN.** [SDKMAN](https://sdkman.io) is installed for the `node` user, with the
+latest **Temurin 21** JDK and **Maven** baked in as defaults (`java` and `mvn` work out of the box).
+The JDK major is a build arg (`--build-arg JAVA_MAJOR=25`); the newest patch release is resolved at
+build time, since SDKMAN only keeps the latest one per major. A session can still pull anything
+else at runtime, e.g.:
+
+```sh
+sdk install java 25.0.5.0+8-tem  # another JDK (identifiers change with each release)
+sdk install scala                # Scala (also: kotlin, gradle, sbt, …)
+sdk list java                    # see available versions
 ```
 
 It's auto-answer enabled (installs won't block on prompts) and wired into both `.bashrc` and
-`.bash_profile`, so the `sdk` command and installed tools are on `PATH` in any shell. Installs
-live under `/home/node/.sdkman` and, like everything else, vanish when the container exits —
-add a `sdk install …` line to the `Dockerfile` if you want a version baked in permanently.
+`.bash_profile`, so the `sdk` command and installed tools are on `PATH` in any shell. Runtime
+installs live under `/home/node/.sdkman` and, like everything else, vanish when the container
+exits. Add a `sdk install …` line to the `Dockerfile` if you want one baked in permanently.
+
+> If your host uid/gid isn't 1000, the entrypoint `chown -R`s `/home/node` on every start, which
+> now includes the ~360 MB JDK and Maven, so startup is a little slower.
 
 ### Files in this repo
 

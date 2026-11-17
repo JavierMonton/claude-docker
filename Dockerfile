@@ -32,6 +32,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# --- PHP + Composer (MediaWiki core/extensions) ------------------------------
+# Debian 12 only ships PHP 8.2, older than current MediaWiki core requires, so PHP comes from
+# Ondřej Surý's repository (packages.sury.org), which has 8.3, 8.4 and 8.5 for bookworm. Pick
+# one with `--build-arg PHP_VERSION=8.5`. The extensions cover core's PHPUnit (unit +
+# integration on SQLite), phpcs and Phan; `ast` lets Phan use its native parser instead of the
+# much slower --allow-polyfill-parser. memory_limit is lifted because PHPUnit and Phan on core
+# go well past the 128M default.
+ARG PHP_VERSION=8.3
+RUN curl -sSfLo /tmp/sury-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb \
+    && dpkg -i /tmp/sury-keyring.deb && rm /tmp/sury-keyring.deb \
+    && echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+        > /etc/apt/sources.list.d/php.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        php${PHP_VERSION}-cli \
+        php${PHP_VERSION}-common \
+        php${PHP_VERSION}-intl \
+        php${PHP_VERSION}-mbstring \
+        php${PHP_VERSION}-xml \
+        php${PHP_VERSION}-sqlite3 \
+        php${PHP_VERSION}-gmp \
+        php${PHP_VERSION}-bcmath \
+        php${PHP_VERSION}-curl \
+        php${PHP_VERSION}-readline \
+        php${PHP_VERSION}-zip \
+        php${PHP_VERSION}-apcu \
+        php${PHP_VERSION}-ast \
+    && echo 'memory_limit = -1' > /etc/php/${PHP_VERSION}/cli/conf.d/99-local.ini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Composer 2, copied from the official image (for `composer update` after pulling core).
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+# --- Headless Chromium system libraries ---------------------------------------
+# Only the shared libraries and fonts Chromium needs (libnss3, libgbm1, libatk*, …), installed by
+# Playwright's own dependency list. The browser itself is version-matched to whichever
+# Playwright a session uses, so it's still fetched at runtime, e.g.
+# `uv run --with playwright python -m playwright install chromium` (no sudo needed).
+RUN npx --yes playwright@latest install-deps chromium \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
 # uv (fast Python package/venv manager) via the official standalone installer.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
@@ -65,6 +105,26 @@ RUN curl -s "https://get.sdkman.io?rcupdate=false" | bash \
     && printf '\n# SDKMAN\nexport SDKMAN_DIR="%s"\n[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"\n' "$SDKMAN_DIR" \
         | tee -a /home/node/.bashrc /home/node/.bash_profile > /dev/null \
     && chown -R node:node "$SDKMAN_DIR" /home/node/.bashrc /home/node/.bash_profile
+
+# Bake in a JDK (Temurin) and Maven so Java/Flink builds work without a per-session download.
+# SDKMAN only lists the newest patch release for each major (e.g. 21.0.13.0+9-tem), so a hard
+# pinned identifier would break the build at the next release; the latest Temurin for
+# JAVA_MAJOR is resolved from the SDKMAN API at build time instead. Maven is SDKMAN's default.
+# Installed as `node`, since SDKMAN is per-user. `sdk install java <other>` still works at runtime.
+ARG JAVA_MAJOR=21
+RUN gosu node bash -c ' \
+        set -eo pipefail; \
+        source "$SDKMAN_DIR/bin/sdkman-init.sh"; \
+        id=$(curl -sSf "$SDKMAN_CANDIDATES_API/candidates/java/$SDKMAN_PLATFORM/versions/list?current=&installed=" \
+            | grep -oE " $JAVA_MAJOR\.[0-9.+]+-tem" | head -1 | tr -d " ") || true; \
+        test -n "$id" || { echo "no Temurin $JAVA_MAJOR found in SDKMAN" >&2; exit 1; }; \
+        sdk install java "$id"; \
+        sdk install maven; \
+        sdk flush'
+# Also expose them image-wide via SDKMAN's `current` symlinks (which `sdk default` repoints), so
+# java/mvn work in shells and subprocesses that never source sdkman-init (e.g. `sh -c`).
+ENV JAVA_HOME=$SDKMAN_DIR/candidates/java/current \
+    PATH=$SDKMAN_DIR/candidates/java/current/bin:$SDKMAN_DIR/candidates/maven/current/bin:$PATH
 
 # Install global npm packages into the node user's home rather than the root-owned
 # /usr/local prefix. This lets the dropped-privilege `node` user auto-update the CLI
